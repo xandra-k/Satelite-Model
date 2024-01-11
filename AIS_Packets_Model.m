@@ -33,7 +33,7 @@ clear; clc;
     RecordLen_smps = NumPackets*PacketLen_smpls;
 
 % Вектор под запись демодулированных сигналов
-    RecordAisSignal = zeros(RecordLen_smps*10, 1); 
+    RecordAisSignal = zeros(RecordLen_smps*100, 1); 
 %RecordAisSignal = zeros(RecordLen_smps - PacketLen_smpls + 1 + NumPackets*PacketLen_smpls, 1);
 
 % Длительность паузы между сообщениями в записи, в длительностях сообщения АИС
@@ -110,7 +110,7 @@ for i = 1 : NumPackets
 
     % Добавление текущего сообщения в общую запись на случайное место
     %if CollisionsOn
-        StartPositions(i) = randi([1, RecordLen_smps*10 - PacketLen_smpls + 1]);
+        StartPositions(i) = randi([1, RecordLen_smps*100 - PacketLen_smpls + 1]);
     % else
     %     if i == 1
     %         StartPositions(i) = 1;
@@ -208,8 +208,9 @@ if isequal(Demodulator, 'Simple')
             y = errorRate(BitPacket(i,:)', OutBitPacket(i,:)');
             y = biterr(BitPacket(i,1:end-16), OutBitPacket(i,17:end));
         % Сохраним BER
-            BER(i) = y(1)/240;        
+            BER1(i) = y(1)/240;        
     end 
+
 
 elseif isequal(Demodulator, 'Zonal') 
     for i = 1:NumPackets
@@ -228,7 +229,7 @@ elseif isequal(Demodulator, 'Zonal')
             
             %narrow_band1_leftpart = filter (flip(ZonalFilterIR), 1, SignalToDemod(i,:).*exp(1i*2*pi*fc1.*t));
             narrow_band1_leftpart = lowpass(SignalToDemod(i,:).*exp(1i*2*pi*fc1.*t), 4800, Fs, ImpulseResponse="fir");
-            z1 = narrow_band1_leftpart.*exp(1i*2*pi*0-fc1.*t);
+            z1 = narrow_band1_leftpart.*exp(1i*2*pi*-fc1.*t);
             z1 = z1./ max([abs(real(z1)); abs(imag(z1))]);
 
             %narrow_band2_centered = filter (flip(ZonalFilterIR), 1, SignalToDemod(i,:));
@@ -239,7 +240,7 @@ elseif isequal(Demodulator, 'Zonal')
             
             % narrow_band3_rightpart = filter (flip(ZonalFilterIR), 1, SignalToDemod(i,:).*exp(1i*2*pi*fc3.*t));
             narrow_band3_rightpart = lowpass(SignalToDemod(i,:).*exp(1i*2*pi*fc3.*t), 4800, Fs, ImpulseResponse="fir"); 
-            z3 = narrow_band3_rightpart.*exp(1i*2*pi*0-fc3.*t);
+            z3 = narrow_band3_rightpart.*exp(1i*2*pi*-fc3.*t);
             z3 = z3./ max([abs(real(z3)); abs(imag(z3))]);
 
 
@@ -258,7 +259,7 @@ elseif isequal(Demodulator, 'Zonal')
                 % Вычисление ошибок с учётом задержки TraceBack Витерби Декодера
                     y = biterr(BitPacket(i,1:end-16), OutBitPacket(i,17:end));
                 % Сохраним BER
-                    BER(ZonalDemodNum, i) = y(1)/240; 
+                    BER2(ZonalDemodNum, i) = y(1)/240; 
 
             end       
     end 
