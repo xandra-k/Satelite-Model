@@ -1,18 +1,24 @@
 clc; clear; close all;
 
+%% Константы 
+EarthRadius = physconst('EarthRadius');
+
 %% Добавление LEO-спутника
 % Создаём спутниковый сценарий
-startTime = datetime(2023,5,5,0,0,0);
+startTime = datetime(2024,3,24,0,16,56);
 stopTime = startTime + hours(6);
 sampleTime = 10; % секунд
 sc = satelliteScenario(startTime,stopTime,sampleTime);
 
 % Добавляем спутник из tle файла
-tleFile = "cubesat.tle";
+tleFile = "PolytechUniverse1.tle";
 sat = satellite(sc, tleFile, Name = "Cubesat");
+
+% Определим широту, долготу, высоту спутника в начальный момент 
+lla = states(sat,startTime,"CoordinateFrame","geographic");
 %% Одна базовая станция
 targetGs = groundStation(sc, Name="Location to Catch", ...
-    Latitude=-16.943443,Longitude=177.835693);    
+    Latitude=lla(1),Longitude=lla(2));    
 
 %% Поле видимости антенны к спутнику
 % Common approach is to fix the sensor on a gimbal and orient the sensor 
@@ -24,7 +30,7 @@ g = gimbal(sat);
 % pointAt(sat, "nadir"); % всегда надир
 
 % Добавляем сенсор к спутнику
-SensorAngle = 100;
+SensorAngle = 90;
 camSensor = conicalSensor(g, "MaxViewAngle", SensorAngle, Name = "Satellie Sensor");
 
 %% Создаём связь между камерой и базовой станцией
@@ -56,22 +62,50 @@ fov = fieldOfView(camSensor);
 %play(sc)
 
 %% Добавляем сетку базовых-станций (кораблей)
-% target location: Latitude=-16.943443,Longitude=177.835693
+% target (-37.3397603503485, -14.5454154598156)
+latlim = [-38.864670 -36.571163]; 
+lonlim = [-15.296714 -14.480875];
+spacingInLatLon = 0.01; % degrees
 
-latlim = [-30 -1];
-lonlim = [162 192];
-spacingInLatLon = 1; % degrees
+proj = projcrs(4087); %??
+spacingInXY = deg2km(spacingInLatLon)*1000; % meters
+[xlimits,ylimits] = projfwd(proj,latlim,lonlim);
+R = maprefpostings(xlimits,ylimits,spacingInXY,spacingInXY);
+[X,Y] = worldGrid(R);
+[gridlat,gridlon] = projinv(proj,X,Y);
+AtlanticOcean = readgeotable("C:\Users\AKuznecova\Desktop\Github\Satelite-Model\AtlanticOcean\AtlanticOcean.shp");
+NorthAtlanticOcean = AtlanticOcean(AtlanticOcean.name == "North Atlantic Ocean",:);
+T = geotable2table(AtlanticOcean,["Latitude","Longitude"]);
+[landlat,landlon] = polyjoin(T.Latitude,T.Longitude);
+[landlat,landlon] = maptrimp(landlat,landlon,latlim,lonlim);
 
-numShips = 10;
+bufwidth = 1;
+[landlatb,landlonb] = bufferm(landlat,landlon,bufwidth,"outPlusInterior");
+australiab = geopolyshape(landlatb,landlonb);
+gridpts = geopointshape(gridlat,gridlon);
+inregion = isinterior(australiab,gridpts);
 
-groundStationsLocationslats = randi([latlim], 1, numShips);
-groundStationsLocationslons = randi([lonlim], 1, numShips);
+gslat = gridlat(inregion);
+gslon = gridlon(inregion);
+gs = groundStation(sc,gslat,gslon);
+fq = 162e6; % Hz
+txpower = 20; % dBW
+antennaType = "Monopole"; % "Monopole";
+
+effectiveLine = sqrt((500e3 + EarthRadius)^2 - EarthRadius^2); % касательная к земле по углу видимости 
+halfBeamWidth = acosd(effectiveLine/EarthRadius);
 
 
-gslat = groundStationsLocationslats;
-gslon = groundStationsLocationslons;
-
-groundStations = groundStation(sc, gslat, gslon, Name="Ship" + string(1:numShips)');
+% numShips = 10;
+% 
+% groundStationsLocationslats = randi([latlim], 1, numShips);
+% groundStationsLocationslons = randi([lonlim], 1, numShips);
+% 
+% 
+% gslat = groundStationsLocationslats;
+% gslon = groundStationsLocationslons;
+% 
+% groundStations = groundStation(sc, gslat, gslon, Name="Ship" + string(1:numShips)');
 %% Создаём связь между камерой и базовой станцией
 % БС в поле видимости спутника, но связь с камерой не установлена - красный
 acStationsFalse = access(sat, [groundStations targetGs]);
@@ -86,15 +120,17 @@ intvlsTrue = accessIntervals(acStationsTrue)
 intvlsFalse = accessIntervals(acStationsFalse)
 
 %% Add Transmitter to LEO  Satellite
-
-antennaf = 1090e6; % in Hz
-satelliteAntenna = arrayConfig("Size",[1 1]); % Add code comment    
-satelliteTransmitter = transmitter( ...
-    sat, ...
-    Antenna=satelliteAntenna, ...
-    Power = 10*log10(125),...
-    MountingAngles= [0,0,0]);
-pattern(satelliteTransmitter,Size=50000); 
+antennaType = "Monopole";
+if antennaType == "Monopole"
+    lambda = physconst('lightspeed')/fq; % meters
+    monopoleHeight = lambda/2;
+    monopoleWidth = 1e-2;
+    mpl = monopole('Height', monopoleHeight, 'Width', monopoleWidth); 
+    tx = transmitter(iridiumSatellites, ...
+        Frequency=fq, ...
+        Power=txpower, ...
+        Antenna=mpl); 
+end
 
 % Play the scenario.
 play(sc);

@@ -3,7 +3,8 @@ clear; clc;
 
 % Ненастраевымые параметры
 % Частота дискретизации, Гц
-    Fs = 249600; % /2
+    %Fs = 249600; % /2
+    Fs = 76800;
 % Длительность одного пакета АИС в битах (26.67 мс)
     PacketLen_bit = 256; 
 % Символьная скорость передачи, б/c
@@ -23,17 +24,23 @@ clear; clc;
     DopplerShift = 1;
 % Тип демодуляции
     Demodulator = 'Zonal'; % 'Zonal' 'Simple'
+% Канал АБГШ
+    Channel = 0;
+% Фиксироаванный ОСШ 
+    SNR = 15; 
 
 % Принятый сигнал АИС
 % Длина одного АИС пакета в отсчётах 
     PacketLen_smpls = PacketLen_bit*sps;  
 % Число пакетов АИС в записи, шт
-    NumPackets = 100;  
+    NumPackets = 2;  
 % Длина записи в отсчётах
     RecordLen_smps = NumPackets*PacketLen_smpls;
+% Расширяющий коэффициент записи (практически влияет на плотность коллизий)
+    koef = 1;
 
 % Вектор под запись демодулированных сигналов
-    RecordAisSignal = zeros(RecordLen_smps*100, 1); 
+    RecordAisSignal = zeros(RecordLen_smps*koef, 1); 
 %RecordAisSignal = zeros(RecordLen_smps - PacketLen_smpls + 1 + NumPackets*PacketLen_smpls, 1);
 
 % Длительность паузы между сообщениями в записи, в длительностях сообщения АИС
@@ -64,19 +71,23 @@ demodGMSK = comm.GMSKDemodulator ('BandwidthTimeProduct', filterBT, ...
 errorRate = comm.ErrorRate('ReceiveDelay', ...
                             demodGMSK.TracebackDepth);
 
-% Параметры зонных фильтров
-    Fs = Fs;                 % Sampling Frequency
-    Fpass = 4800;            % Passband Frequency
-    Fstop = 30000;            % Stopband Frequency
-    Dpass = 0.057501127785;  % Passband 0.
-    Dstop = 0.0001;          % Stopband Attenuation
-    dens  = 20;              % Density Factor
-    [N, Fo, Ao, W] = firpmord([Fpass, Fstop]/(Fs/2), [1 0], [Dpass, Dstop]);
-    ZonalFilterIR  = firpm(N, Fo, Ao, W, {dens}); % Импульсная характеристика
-% Полоса фильтра, Гц
-    bandWidth = 1/SymbolInterval; 
+% % Параметры зонных фильтров
+%     Fs = Fs;                 % Sampling Frequency
+%     Fpass = 4800;            % Passband Frequency
+%     Fstop = 30000;            % Stopband Frequency
+%     Dpass = 0.057501127785;  % Passband 0.
+%     Dstop = 0.0001;          % Stopband Attenuation
+%     dens  = 20;              % Density Factor
+%     [N, Fo, Ao, W] = firpmord([Fpass, Fstop]/(Fs/2), [1 0], [Dpass, Dstop]);
+%     ZonalFilterIR  = firpm(N, Fo, Ao, W, {dens}); % Импульсная характеристика
+% % Полоса фильтра, Гц
+%     bandWidth = 1/SymbolInterval; 
+
+SNRs = -2:2:16;
 
 %% Модель 
+%for n = 1:length (SNRs) % цикл по осш
+RecordAisSignal = zeros(RecordLen_smps*koef, 1);    
 for i = 1 : NumPackets
     % Формирование принятого пакета
     % Информационные биты
@@ -91,11 +102,14 @@ for i = 1 : NumPackets
     % Верхняя граница доплеровского сдвига, Гц 
         dF_Upper = 4000; 
     % Случайная величина частотного сдвига
-        deltaFreq(i) = randi([dF_Bottom, dF_Upper]); 
+        %deltaFreq(i) = randi([dF_Bottom, dF_Upper]); 
+        deltaFreq = [-4000, -1000];
 
     if DopplerShift 
         % Сигнал (пакет), сдвинутый по частоте
         PacketLPE(i,:) = PacketLPE(i,:) .* exp(1i*2*pi*deltaFreq(i)/Fs*(0:PacketLen_smpls-1));
+        % Ослабление сигнала в зависимости от частотного сдвига
+        %PacketLPE(i,:) = 1/abs(deltaFreq(i)) * PacketLPE(i,:);
     else
         PacketLPE(i,:) = PacketLPE(i,:);
     end
@@ -110,7 +124,10 @@ for i = 1 : NumPackets
 
     % Добавление текущего сообщения в общую запись на случайное место
     %if CollisionsOn
-        StartPositions(i) = randi([1, RecordLen_smps*100 - PacketLen_smpls + 1]);
+        %StartPositions(i) = randi([1, RecordLen_smps*koef - PacketLen_smpls + 1]);
+        %StartPositions = [1 1]; % пересекаются на 100%
+        StartPositions = [1 0.5*PacketLen_smpls+1]; % пересекаются на 50%
+        %StartPositions = [1, PacketLen_smpls+1]; % не пересекаются
     % else
     %     if i == 1
     %         StartPositions(i) = 1;
@@ -182,85 +199,92 @@ DemodData = zeros (NumPackets, PacketLen_bit);
     % pwelch(filtered(i,:), [], [], [], Fs, 'centered')
     % hold on
 
+%% КАНАЛ АБГШ
+    if Channel 
+        % Добавляем шумовые отсчёты к сигналу
+        RecordAisSignal = awgn(RecordAisSignal, 16, "measured"); 
+    else
+        RecordAisSignal = RecordAisSignal;
+    end
 
-
-
-%%% ДЕМОДУЛЯЦИЯ %%%
-if isequal(Demodulator, 'Simple')
+%% ДЕМОДУЛЯЦИЯ 
+%if isequal(Demodulator, 'Simple')
+SignalToDemod2 = [];
+SignalToDemod1 = [];
     for i = 1:NumPackets
         % Частотная синхронизация
             if DopplerShift 
-                % Сигнал (пакет), сдвинутый по частоте
-                SignalToDemod(i,:) = RecordAisSignal(StartPositions(i):EndPositions(i)).* exp(1i*2*pi*-deltaFreq(i)/Fs*(0:PacketLen_smpls-1)).';
+                % Часть сигнала, предназнач. для демодуляции
+                SignalToDemod1(i,:) = RecordAisSignal(StartPositions(i):EndPositions(i)).* exp(1i*2*pi*-deltaFreq(i)/Fs*(0:PacketLen_smpls-1)).';
             else
-                SignalToDemod(i,:) = RecordAisSignal(StartPositions(i):EndPositions(i));
+                SignalToDemod1(i,:) = RecordAisSignal(StartPositions(i):EndPositions(i));
             end
 
-        % Часть сигнала, предназнач. для демодуляции
-           % SignalToDemod(i,:) = RecordAisSignal(StartPositions(i):EndPositions(i)).* exp(1i*2*pi*-deltaFreq(i)/Fs*(0:PacketLen_smpls-1)).';
-        % GMSK-демодулция i-го пакета
-            DemodData =  demodGMSK(SignalToDemod(i,:).');
+        % GMSK демодуляция
+            DemodData1 =  demodGMSK(SignalToDemod1(i,:).');
         % Запись в массив выходных бит
-            OutBitPacket (i, :) = DemodData;
+            OutBitPacket1 (i, :) = DemodData1;
         % [errorCounter(i,:), ratio(i,:)] = biterr (BitPacket(i,:), OutBitPacket(i,:));
         
         % Вычисление ошибок с учётом задержки TraceBack Витерби Декодера
-            y = errorRate(BitPacket(i,:)', OutBitPacket(i,:)');
-            y = biterr(BitPacket(i,1:end-16), OutBitPacket(i,17:end));
+            %y = errorRate(BitPacket(i,:)', OutBitPacket1(i,:)');
+            y = biterr(BitPacket(i,1:end-16), OutBitPacket1(i,17:end));
         % Сохраним BER
-            BER1(i) = y(1)/240;        
+            BER1(i) = y/(240);        
     end 
 
-
-elseif isequal(Demodulator, 'Zonal') 
+SignalToDemod = [];
+%elseif isequal(Demodulator, 'Zonal') 
     for i = 1:NumPackets
         % Частотная синхронизация
             if DopplerShift 
-                % Сигнал (пакет), сдвинутый по частоте
-                SignalToDemod(i,:) = RecordAisSignal(StartPositions(i):EndPositions(i)).* exp(1i*2*pi*-deltaFreq(i)/Fs*(0:PacketLen_smpls-1)).';
+                % Часть сигнала, предназнач. для демодуляции
+                SignalToDemod2(i,:) = RecordAisSignal(StartPositions(i):EndPositions(i)).* exp(1i*2*pi*-deltaFreq(i)/Fs*(0:PacketLen_smpls-1)).';
             else
-                SignalToDemod(i,:) = RecordAisSignal(StartPositions(i):EndPositions(i));
+                SignalToDemod2(i,:) = RecordAisSignal(StartPositions(i):EndPositions(i));
             end
+
         % ....
-            t = (0:length(SignalToDemod)-1)/Fs;
+            t = (0:length(SignalToDemod2)-1)/Fs;
         % Центральные частоты поддиапазонов (пока не параметризированы )
             fc1 = -3840; fc2 = 0; fc3 = 3840;
         % Выделяем три поддиапазона демодулятора (временная область, exp - сдвиг на fc)
             
-            %narrow_band1_leftpart = filter (flip(ZonalFilterIR), 1, SignalToDemod(i,:).*exp(1i*2*pi*fc1.*t));
-            narrow_band1_leftpart = lowpass(SignalToDemod(i,:).*exp(1i*2*pi*fc1.*t), 4800, Fs, ImpulseResponse="fir");
-            z1 = narrow_band1_leftpart.*exp(1i*2*pi*-fc1.*t);
-            z1 = z1./ max([abs(real(z1)); abs(imag(z1))]);
+            %narrow_band1_leftpart = filter (flip(ZonalFilterIR), 1, SignalToDemod2(i,:).*exp(1i*2*pi*fc1.*t));
+            % narrow_band1_leftpart = lowpass(SignalToDemod2(i,:).*exp(1i*2*pi*fc1.*t), 4800, Fs, ImpulseResponse="fir");
+            % z1 = narrow_band1_leftpart.*exp(1i*2*pi*-fc1.*t);
+            % z1 = z1./ max([abs(real(z1)); abs(imag(z1))]);
 
             %narrow_band2_centered = filter (flip(ZonalFilterIR), 1, SignalToDemod(i,:));
-            narrow_band2_centered = lowpass(SignalToDemod(i,:), 4800, Fs, ImpulseResponse="fir");
+            narrow_band2_centered = lowpass(SignalToDemod2(i,:), 3800, Fs, ImpulseResponse="fir");
             z2 = narrow_band2_centered;
-            z2 = z2./ max([abs(real(z2)); abs(imag(z2))]);
+            %z2 = z2 / max([abs(real(z2)); abs(imag(z2))]); % нормировка
 
             
-            % narrow_band3_rightpart = filter (flip(ZonalFilterIR), 1, SignalToDemod(i,:).*exp(1i*2*pi*fc3.*t));
-            narrow_band3_rightpart = lowpass(SignalToDemod(i,:).*exp(1i*2*pi*fc3.*t), 4800, Fs, ImpulseResponse="fir"); 
-            z3 = narrow_band3_rightpart.*exp(1i*2*pi*-fc3.*t);
-            z3 = z3./ max([abs(real(z3)); abs(imag(z3))]);
+            % narrow_band3_rightpart = filter (flip(ZonalFilterIR), 1, SignalToDemod2(i,:).*exp(1i*2*pi*fc3.*t));
+            % narrow_band3_rightpart = lowpass(SignalToDemo2d2(i,:).*exp(1i*2*pi*fc3.*t), 4800, Fs, ImpulseResponse="fir"); 
+            % z3 = narrow_band3_rightpart.*exp(1i*2*pi*-fc3.*t);
+            % z3 = z3./ max([abs(real(z3)); abs(imag(z3))]);
 
 
         % Массив сигналов соответвующих поддиапазонов
-            ZonalBandSignals = [z1', z2', z3'];
-
+            %ZonalBandSignals = [z1', z2', z3'];
+            ZonalBandSignals = [z2.'];     
 
         % Цикл по зонным демодуляторам
-            for ZonalDemodNum = 1:3 % для z2 полностью инвертированны
+            for ZonalDemodNum = 1:1 % для z2 полностью инвертированны
                 % Сигнал текущего поддиапазона
                     SubbandSig = ZonalBandSignals(:, ZonalDemodNum);
                 % GMSK-демодулция i-го пакета, ZonalDemodNum-го демодулятора
-                    DemodData =  demodGMSK(SubbandSig);
+                    DemodData2 =  demodGMSK(SubbandSig);
                 % Запись в массив выходных бит
-                    OutBitPacket (i, :) = ((-1)*DemodData' +1);
+                    OutBitPacket2 (i, :) = DemodData2.';
                 % Вычисление ошибок с учётом задержки TraceBack Витерби Декодера
-                    y = biterr(BitPacket(i,1:end-16), OutBitPacket(i,17:end));
+                    y = biterr(BitPacket(i,1:end-16), OutBitPacket2(i,17:end));
                 % Сохраним BER
-                    BER2(ZonalDemodNum, i) = y(1)/240; 
-
+                    %BER2(ZonalDemodNum, i) = y/240; 
+                    BER2(i) = y/(240); 
             end       
     end 
-end
+%end
+%end % цикл по SNR
